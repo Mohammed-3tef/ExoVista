@@ -1,39 +1,39 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
 from typing import Any, Dict, Optional
 from datetime import datetime
-import os
 from dotenv import load_dotenv
-import google.generativeai as genai
 
 # Load env
 load_dotenv()
 
-api_key = os.getenv("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-flash-latest")
-else:
-    model = None
-    print("⚠️ GEMINI_API_KEY missing")
+# Functions import
+from .utils import setup_gemini, create_app, chat_with_gemini, predict_exoplanet
 
-app = FastAPI()
-templates = Jinja2Templates(directory="app/templates")
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Setup
+model = setup_gemini()
+app, templates = create_app()
+predictor = None  # هنا تحط ML Model بتاعك
 
 # Pydantic models
+class ExoplanetFeatures(BaseModel):
+    koi_ror: float = Field(..., ge=0.001, le=1.0)
+    koi_impact: float = Field(..., ge=0.0, le=1.0)
+    koi_depth: float = Field(..., ge=0.0, le=1000.0)
+    koi_prad: float = Field(..., ge=0.1, le=50.0)
+    koi_teq: float = Field(..., ge=100.0, le=5000.0)
+    koi_duration: float = Field(..., ge=0.1, le=50.0)
+    koi_insol: float = Field(..., ge=0.1, le=10000.0)
+    koi_steff: float = Field(..., ge=2000.0, le=10000.0)
+
+class PredictionResponse(BaseModel):
+    classification: str
+    confidence: float
+    feature_importance: Optional[Dict[str, float]] = None
+    timestamp: str
+    error: Optional[str] = None
+
 class ChatRequest(BaseModel):
     message: str
     context: Optional[Dict[str, Any]] = None
@@ -43,23 +43,17 @@ class ChatResponse(BaseModel):
     timestamp: str
     context_used: bool = False
 
+# Routes
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    if not model:
-        reply = "⚠️ Gemini AI is not configured."
-    else:
-        try:
-            response = model.generate_content(request.message)
-            reply = response.text if hasattr(response, "text") else str(response)
-        except Exception as e:
-            reply = f"❌ Gemini error: {e}"
+    reply = await chat_with_gemini(request.message, request.context, model)
+    return ChatResponse(reply=reply, timestamp=datetime.now().isoformat(), context_used=bool(request.context))
 
-    return ChatResponse(
-        reply=reply,
-        timestamp=datetime.now().isoformat(),
-        context_used=bool(request.context)
-    )
+@app.post("/api/predict/single", response_model=PredictionResponse)
+async def predict_single(features: ExoplanetFeatures):
+    result = predict_exoplanet(features.dict(), predictor)
+    return PredictionResponse(**result)
