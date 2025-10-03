@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ExoVista - AI Exoplanet Detection</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../static/styles/styles.css">
+    <script src="../static/scripts/app.js"></script>
+
+</head>
+<body>
+    <div id="root">
+        <!-- Starfield background -->
+        <div class="starfield">
+            <div class="stars"></div>
+            <div class="stars2"></div>
+            <div class="stars3"></div>
+        </div>
+        
+        <!-- Main content will be rendered here -->
+        <div class="app-container">
+            <header class="header">
+                <h1 class="title">
+                    <span class="cosmic">COSMIC</span>
+                    <span class="hunter">HUNTER</span>
+                </h1>
+                <p class="subtitle">AI-Powered Exoplanet Detection System</p>
+            </header>
+            
+            <main class="main-content">
+                <!-- Navigation -->
+                <nav class="nav-tabs">
+                    <button class="nav-tab active" data-tab="scan">Manual Scan</button>
+                    <button class="nav-tab" data-tab="batch">Batch Upload</button>
+                    <button class="nav-tab" data-tab="results">Results</button>
+                </nav>
+                
+                <!-- Tab content -->
+                <div class="tab-content">
+                    <!-- Manual Scan Tab -->
+                    <div id="scan-tab" class="tab-panel active">
+                        <div class="scan-form-container">
+                            <h2>Exoplanet Feature Analysis</h2>
+                            <form id="scan-form" class="scan-form">
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="koi_ror">Planet-to-Star Radius Ratio</label>
+                                        <input type="number" id="koi_ror" name="koi_ror" step="0.001" min="0.001" max="1.0" required>
+                                        <span class="help-text">Ratio of planet radius to star radius</span>
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label for="koi_impact">Impact Parameter</label>
+                                        <input type="number" id="koi_impact" name="koi_impact" step="0.01" min="0.0" max="1.0" required>
+                                        <span class="help-text">Transit impact parameter (0-1)</span>
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label for="koi_depth">Transit Depth (ppm)</label>
+                                        <input type="number" id="koi_depth" name="koi_depth" step="1" min="0" max="1000" required>
+                                        <span class="help-text">Transit depth in parts per million</span>
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label for="koi_prad">Planetary Radius (R⊕)</label>
+                                        <input type="number" id="koi_prad" name="koi_prad" step="0.1" min="0.1" max="50.0" required>
+                                        <span class="help-text">Planet radius in Earth radii</span>
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label for="koi_teq">Equilibrium Temperature (K)</label>
+                                        <input type="number" id="koi_teq" name="koi_teq" step="10" min="100" max="5000" required>
+                                        <span class="help-text">Planet equilibrium temperature</span>
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label for="koi_duration">Transit Duration (hours)</label>
+                                        <input type="number" id="koi_duration" name="koi_duration" step="0.1" min="0.1" max="50.0" required>
+                                        <span class="help-text">Duration of transit event</span>
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label for="koi_insol">Insolation Flux</label>
+                                        <input type="number" id="koi_insol" name="koi_insol" step="1" min="0.1" max="10000" required>
+                                        <span class="help-text">Stellar flux at planet</span>
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label for="koi_steff">Stellar Temperature (K)</label>
+                                        <input type="number" id="koi_steff" name="koi_steff" step="10" min="2000" max="10000" required>
+                                        <span class="help-text">Host star effective temperature</span>
+                                    </div>
+                                </div>
+                                
+                                <button type="submit" class="scan-button">
+                                    <span class="button-text">Analyze Exoplanet</span>
+                                    <span class="button-icon">🚀</span>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <!-- Batch Upload Tab -->
+                    <div id="batch-tab" class="tab-panel">
+                        <div class="batch-upload-container">
+                            <h2>Batch CSV Analysis</h2>
+                            <div class="upload-zone" id="upload-zone">
+                                <div class="upload-content">
+                                    <div class="upload-icon">📁</div>
+                                    <h3>Drop CSV file here or click to browse</h3>
+                                    <p>Upload a CSV file with exoplanet data for batch analysis</p>
+                                    <input type="file" id="csv-file" accept=".csv" style="display: none;">
+                                    <button class="browse-button" onclick="document.getElementById('csv-file').click()">
+                                        Browse Files
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="upload-requirements">
+                                <h4>Required CSV Columns:</h4>
+                                <ul>
+                                    <li>koi_ror - Planet-to-star radius ratio</li>
+                                    <li>koi_impact - Impact parameter</li>
+                                    <li>koi_depth - Transit depth (ppm)</li>
+                                    <li>koi_prad - Planetary radius (R⊕)</li>
+                                    <li>koi_teq - Equilibrium temperature (K)</li>
+                                    <li>koi_duration - Transit duration (hours)</li>
+                                    <li>koi_insol - Insolation flux</li>
+                                    <li>koi_steff - Stellar temperature (K)</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Results Tab -->
+                    <div id="results-tab" class="tab-panel">
+                        <div class="results-container">
+                            <h2>Analysis Results</h2>
+                            <div id="results-content">
+                                <div class="no-results">
+                                    <div class="no-results-icon">🔭</div>
+                                    <h3>No Analysis Results Yet</h3>
+                                    <p>Run a manual scan or upload a CSV file to see results here.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+        
+        <!-- Floating AI Chatbot -->
+        <div class="chat-widget">
+            <button class="chat-toggle" id="chat-toggle">
+                <span class="chat-icon">🤖</span>
+            </button>
+            <div class="chat-window" id="chat-window">
+                <div class="chat-header">
+                    <h3>Cosmic AI Assistant</h3>
+                    <button class="chat-close" id="chat-close">×</button>
+                </div>
+                <div class="chat-messages" id="chat-messages">
+                    <div class="message ai-message">
+                        <div class="message-content">
+                            Hello! I'm your AI assistant for exoplanet science. Ask me anything about exoplanets, our detection model, or the analysis results!
+                        </div>
+                    </div>
+                </div>
+                <div class="chat-input-container">
+                    <input type="text" id="chat-input" placeholder="Ask about exoplanets...">
+                    <button id="chat-send">Send</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Loading overlay -->
+        <div class="loading-overlay" id="loading-overlay">
+            <div class="loading-content">
+                <div class="loading-spinner"></div>
+                <h3>Analyzing Exoplanet Data...</h3>
+                <p>Our AI model is processing the features</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+

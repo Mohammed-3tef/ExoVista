@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+jinja2
+numpy
+scikit-learn
+torch
+tensorflow
+matplotlib
+pandas
+hvplot
+bokeh
+pathlib
+seaborn
+nbformat
+nbconvert
+plotly
+dotenv

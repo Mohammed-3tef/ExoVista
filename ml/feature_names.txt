@@ -1,8 +1,0 @@
-koi_ror
-koi_impact
-koi_depth
-koi_prad
-koi_teq
-koi_duration
-koi_insol
-koi_steff
