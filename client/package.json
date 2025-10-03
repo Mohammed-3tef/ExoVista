@@ -1,0 +1,24 @@
+{
+  "name": "cosmic-hunter-frontend",
+  "version": "1.0.0",
+  "description": "AI-powered exoplanet detection frontend",
+  "main": "public/index.html",
+  "scripts": {
+    "start": "python -m http.server 3000 --directory public",
+    "dev": "python -m http.server 3000 --directory public",
+    "build": "echo 'Static build - no build process needed'",
+    "serve": "python -m http.server 3000 --directory public"
+  },
+  "keywords": [
+    "exoplanet",
+    "ai",
+    "detection",
+    "space",
+    "astronomy"
+  ],
+  "author": "Cosmic Hunter Team",
+  "license": "MIT",
+  "devDependencies": {},
+  "dependencies": {}
+}
+
