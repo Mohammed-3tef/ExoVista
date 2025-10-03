@@ -373,7 +373,13 @@ class CosmicHunter {
         const messagesContainer = document.getElementById('chat-messages');
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}-message`;
-        messageDiv.innerHTML = `<div class="message-content">${message}</div>`;
+
+        // format: keep newlines + bold
+        const formattedMessage = message
+            .replace(/\n/g, "<br>")
+            .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+
+        messageDiv.innerHTML = `<div class="message-content">${formattedMessage}</div>`;
         
         messagesContainer.appendChild(messageDiv);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
