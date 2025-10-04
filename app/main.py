@@ -1,4 +1,4 @@
-from fastapi import Request
+from fastapi import Request, UploadFile, File
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from typing import Any, Dict, Optional
@@ -9,12 +9,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Functions import
-from .utils import setup_gemini, create_app, chat_with_gemini, predict_exoplanet
+from .utils import (
+    setup_gemini, create_app, chat_with_gemini, predict_exoplanet,
+    load_predictor, predict_batch_from_csv, sample_features,
+)
 
 # Setup
 model = setup_gemini()
 app, templates = create_app()
-predictor = None  # هنا تحط ML Model بتاعك
+predictor = load_predictor()
 
 # Pydantic models
 class ExoplanetFeatures(BaseModel):
@@ -57,3 +60,14 @@ async def chat(request: ChatRequest):
 async def predict_single(features: ExoplanetFeatures):
     result = predict_exoplanet(features.dict(), predictor)
     return PredictionResponse(**result)
+
+@app.post("/api/predict/batch")
+async def predict_batch(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith('.csv'):
+        return {"detail": "Please upload a CSV file."}
+    content = await file.read()
+    return predict_batch_from_csv(content, predictor)
+
+@app.get("/api/sample/data")
+async def get_sample_data():
+    return sample_features()

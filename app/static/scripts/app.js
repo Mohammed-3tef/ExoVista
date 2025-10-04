@@ -4,6 +4,7 @@ class CosmicHunter {
     constructor() {
         this.apiBaseUrl = 'http://localhost:8000';
         this.currentResults = [];
+        this.charts = {}; // Store chart instances
         this.init();
     }
 
@@ -149,16 +150,24 @@ class CosmicHunter {
             this.processFile(file);
         }
     }
+    
+    resetFileInput() {
+        // Reset the file input to allow re-uploading the same file
+        const fileInput = document.getElementById('csv-file');
+        fileInput.value = '';
+    }
 
     async processFile(file) {
         if (!file.name.toLowerCase().endsWith('.csv')) {
             this.showError('Please select a CSV file.');
+            this.resetFileInput();
             return;
         }
 
         // Check file size (limit to 10MB)
         if (file.size > 10 * 1024 * 1024) {
             this.showError('File size too large. Please select a file smaller than 10MB.');
+            this.resetFileInput();
             return;
         }
 
@@ -195,6 +204,7 @@ class CosmicHunter {
             this.showError(`Failed to process CSV file: ${error.message}`);
         } finally {
             this.showLoading(false);
+            this.resetFileInput();
         }
     }
 
@@ -216,20 +226,42 @@ class CosmicHunter {
             // Single result display
             const result = this.currentResults[0];
             resultsContent.innerHTML = this.createSingleResultHTML(result);
+            
+            // Create visualizations after HTML is rendered
+            setTimeout(() => {
+                this.createConfidenceGauge('confidence-gauge', result.confidence);
+                if (result.feature_importance) {
+                    this.createFeatureImportanceChart('feature-importance-chart', result.feature_importance);
+                }
+                this.addChartInteractivity();
+                this.addExportButtons();
+            }, 100);
         } else {
             // Batch results display
             resultsContent.innerHTML = this.createBatchResultsHTML();
+            
+            // Create batch visualizations after HTML is rendered
+            setTimeout(() => {
+                this.createClassificationPieChart('classification-pie-chart', this.currentResults);
+                this.createConfidenceDistributionChart('confidence-distribution-chart', this.currentResults);
+                this.addChartInteractivity();
+                this.addExportButtons();
+            }, 100);
         }
     }
 
     createSingleResultHTML(result) {
-        const isConfirmed = result.classification === 'CONFIRMED';
+        const classification = result.classification;
+        const badgeClass = 
+            classification === 'CONFIRMED' ? 'confirmed' : 
+            classification === 'CANDIDATE' ? 'candidate' : 
+            'false-positive';
         const confidencePercent = Math.round(result.confidence * 100);
         
         return `
             <div class="result-card">
                 <div class="result-header">
-                    <div class="classification-badge ${isConfirmed ? 'confirmed' : 'not-confirmed'}">
+                    <div class="classification-badge ${badgeClass}">
                         ${result.classification}
                     </div>
                     <div class="confidence-meter">
@@ -240,17 +272,42 @@ class CosmicHunter {
                     </div>
                 </div>
                 
+                <!-- Visualization Section -->
+                <div class="visualization-section">
+                    <div class="chart-container">
+                        <div class="chart-header">
+                            <h4>Confidence Gauge</h4>
+                        </div>
+                        <div class="chart-wrapper">
+                            <canvas id="confidence-gauge"></canvas>
+                        </div>
+                    </div>
+                    
+                    ${result.feature_importance ? `
+                        <div class="chart-container">
+                            <div class="chart-header">
+                                <h4>Feature Importance Analysis</h4>
+                            </div>
+                            <div class="chart-wrapper">
+                                <canvas id="feature-importance-chart"></canvas>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+                
                 ${result.feature_importance ? `
-                    <h4>Feature Importance</h4>
-                    <div class="feature-grid">
-                        ${Object.entries(result.feature_importance)
-                            .sort(([,a], [,b]) => b - a)
-                            .map(([feature, importance]) => `
-                                <div class="feature-item">
-                                    <div class="feature-label">${this.getFeatureDisplayName(feature)}</div>
-                                    <div class="feature-value">${(importance * 100).toFixed(1)}%</div>
-                                </div>
-                            `).join('')}
+                    <div class="feature-details">
+                        <h4>Feature Details</h4>
+                        <div class="feature-grid">
+                            ${Object.entries(result.feature_importance)
+                                .sort(([,a], [,b]) => b - a)
+                                .map(([feature, importance]) => `
+                                    <div class="feature-item">
+                                        <div class="feature-label">${this.getFeatureDisplayName(feature)}</div>
+                                        <div class="feature-value">${(importance * 100).toFixed(1)}%</div>
+                                    </div>
+                                `).join('')}
+                        </div>
                     </div>
                 ` : ''}
                 
@@ -289,7 +346,29 @@ class CosmicHunter {
                 </div>
             </div>
             
+            <!-- Batch Visualizations -->
+            <div class="batch-visualizations">
+                <div class="chart-container">
+                    <div class="chart-header">
+                        <h4>Classification Distribution</h4>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="classification-pie-chart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="chart-container">
+                    <div class="chart-header">
+                        <h4>Confidence Distribution</h4>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="confidence-distribution-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
             <div class="batch-results">
+                <h4>Individual Results</h4>
                 ${this.currentResults.slice(0, 10).map((result, index) => `
                     <div class="result-card">
                         <div class="result-header">
@@ -527,6 +606,662 @@ class CosmicHunter {
                 notificationDiv.remove();
             }, 300);
         }, 5000);
+    }
+
+    // Visualization Functions
+    destroyChart(chartId) {
+        if (this.charts[chartId]) {
+            this.charts[chartId].destroy();
+            delete this.charts[chartId];
+        }
+    }
+
+    createFeatureImportanceChart(containerId, featureData) {
+        this.destroyChart(containerId);
+        
+        const ctx = document.getElementById(containerId).getContext('2d');
+        const sortedFeatures = Object.entries(featureData)
+            .sort(([,a], [,b]) => b - a)
+            .slice(0, 8); // Top 8 features
+
+        this.charts[containerId] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: sortedFeatures.map(([feature]) => this.getFeatureDisplayName(feature)),
+                datasets: [{
+                    label: 'Importance (%)',
+                    data: sortedFeatures.map(([, importance]) => importance * 100),
+                    backgroundColor: 'rgba(0, 212, 255, 0.6)',
+                    borderColor: 'rgba(0, 212, 255, 1)',
+                    borderWidth: 2,
+                    borderRadius: 4,
+                    borderSkipped: false,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    title: {
+                        display: true,
+                        text: 'Feature Importance Analysis',
+                        color: '#00d4ff',
+                        font: {
+                            family: 'Orbitron',
+                            size: 16,
+                            weight: 'bold'
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(26, 26, 46, 0.9)',
+                        titleColor: '#00d4ff',
+                        bodyColor: '#b0b0b0',
+                        borderColor: '#00d4ff',
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        displayColors: false,
+                        titleFont: {
+                            family: 'Orbitron',
+                            weight: 'bold'
+                        },
+                        bodyFont: {
+                            family: 'Orbitron'
+                        },
+                        callbacks: {
+                            title: function(context) {
+                                return context[0].label;
+                            },
+                            label: function(context) {
+                                return `Importance: ${context.parsed.y.toFixed(1)}%`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        ticks: {
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(26, 26, 46, 0.3)'
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron',
+                                size: 10
+                            }
+                        },
+                        grid: {
+                            display: false
+                        }
+                    }
+                },
+                animation: {
+                    duration: 2000,
+                    easing: 'easeInOutQuart'
+                },
+                onClick: (event, elements) => {
+                    if (elements.length > 0) {
+                        const elementIndex = elements[0].index;
+                        const featureName = sortedFeatures[elementIndex][0];
+                        this.showFeatureDetails(featureName, sortedFeatures[elementIndex][1]);
+                    }
+                }
+            }
+        });
+    }
+
+    createConfidenceGauge(containerId, confidence) {
+        this.destroyChart(containerId);
+        
+        const ctx = document.getElementById(containerId).getContext('2d');
+        const percentage = Math.round(confidence * 100);
+        
+        this.charts[containerId] = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                datasets: [{
+                    data: [percentage, 100 - percentage],
+                    backgroundColor: [
+                        'rgba(0, 212, 255, 0.8)',
+                        'rgba(26, 26, 46, 0.3)'
+                    ],
+                    borderColor: [
+                        'rgba(0, 212, 255, 1)',
+                        'rgba(26, 26, 46, 0.5)'
+                    ],
+                    borderWidth: 2,
+                    cutout: '70%'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        enabled: true,
+                        ...this.getCosmicTooltipConfig(),
+                        callbacks: {
+                            label: function(context) {
+                                return `Confidence: ${context.parsed}%`;
+                            }
+                        }
+                    }
+                },
+                animation: {
+                    animateRotate: true,
+                    duration: 2000,
+                    easing: 'easeInOutQuart'
+                }
+            }
+        });
+
+        // Add center text
+        const centerText = document.createElement('div');
+        centerText.className = 'gauge-center-text';
+        centerText.innerHTML = `
+            <div class="gauge-percentage">${percentage}%</div>
+            <div class="gauge-label">Confidence</div>
+        `;
+        centerText.style.cssText = `
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #00d4ff;
+            font-family: 'Orbitron', monospace;
+            font-weight: bold;
+        `;
+        
+        const gaugeContainer = document.getElementById(containerId).parentElement;
+        gaugeContainer.style.position = 'relative';
+        gaugeContainer.appendChild(centerText);
+    }
+
+    createClassificationPieChart(containerId, results) {
+        this.destroyChart(containerId);
+        
+        const ctx = document.getElementById(containerId).getContext('2d');
+        const confirmed = results.filter(r => r.classification === 'CONFIRMED').length;
+        const candidate = results.filter(r => r.classification === 'CANDIDATE').length;
+        const falsePositive = results.filter(r => r.classification === 'FALSE POSITIVE').length;
+        
+        this.charts[containerId] = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: ['Confirmed', 'Candidate', 'False Positive'],
+                datasets: [{
+                    data: [confirmed, candidate, falsePositive],
+                    backgroundColor: [
+                        'rgba(16, 185, 129, 0.8)',
+                        'rgba(245, 158, 11, 0.8)',
+                        'rgba(239, 68, 68, 0.8)'
+                    ],
+                    borderColor: [
+                        'rgba(16, 185, 129, 1)',
+                        'rgba(245, 158, 11, 1)',
+                        'rgba(239, 68, 68, 1)'
+                    ],
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron',
+                                size: 12
+                            }
+                        }
+                    },
+                    title: {
+                        display: true,
+                        text: 'Classification Distribution',
+                        color: '#00d4ff',
+                        font: {
+                            family: 'Orbitron',
+                            size: 16,
+                            weight: 'bold'
+                        }
+                    },
+                    tooltip: {
+                        ...this.getCosmicTooltipConfig(),
+                        callbacks: {
+                            label: function(context) {
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                return `${context.label}: ${context.parsed} (${percentage}%)`;
+                            }
+                        }
+                    }
+                },
+                animation: {
+                    animateRotate: true,
+                    duration: 2000,
+                    easing: 'easeInOutQuart'
+                }
+            }
+        });
+    }
+
+    createConfidenceDistributionChart(containerId, results) {
+        this.destroyChart(containerId);
+        
+        const ctx = document.getElementById(containerId).getContext('2d');
+        const confidences = results.map(r => Math.round(r.confidence * 100));
+        
+        // Create histogram bins
+        const bins = [0, 20, 40, 60, 80, 100];
+        const binLabels = ['0-20%', '20-40%', '40-60%', '60-80%', '80-100%'];
+        const binCounts = new Array(bins.length - 1).fill(0);
+        
+        confidences.forEach(conf => {
+            for (let i = 0; i < bins.length - 1; i++) {
+                if (conf >= bins[i] && conf < bins[i + 1]) {
+                    binCounts[i]++;
+                    break;
+                }
+            }
+        });
+        
+        // Color bins based on our classification thresholds
+        const backgroundColors = [
+            'rgba(239, 68, 68, 0.6)',  // 0-20% (False Positive)
+            'rgba(239, 68, 68, 0.6)',  // 20-40% (False Positive)
+            'rgba(245, 158, 11, 0.6)', // 40-60% (Candidate)
+            'rgba(245, 158, 11, 0.6)', // 60-80% (Candidate)
+            'rgba(16, 185, 129, 0.6)'  // 80-100% (Confirmed)
+        ];
+        
+        const borderColors = [
+            'rgba(239, 68, 68, 1)',  // 0-20% (False Positive)
+            'rgba(239, 68, 68, 1)',  // 20-40% (False Positive)
+            'rgba(245, 158, 11, 1)', // 40-60% (Candidate)
+            'rgba(245, 158, 11, 1)', // 60-80% (Candidate)
+            'rgba(16, 185, 129, 1)'  // 80-100% (Confirmed)
+        ];
+        
+        this.charts[containerId] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: binLabels,
+                datasets: [{
+                    label: 'Number of Results',
+                    data: binCounts,
+                    backgroundColor: backgroundColors,
+                    borderColor: borderColors,
+                    borderWidth: 2,
+                    borderRadius: 4,
+                    borderSkipped: false,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    title: {
+                        display: true,
+                        text: 'Confidence Distribution',
+                        color: '#00d4ff',
+                        font: {
+                            family: 'Orbitron',
+                            size: 16,
+                            weight: 'bold'
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(26, 26, 46, 0.3)'
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        },
+                        grid: {
+                            display: false
+                        }
+                    }
+                },
+                animation: {
+                    duration: 2000,
+                    easing: 'easeInOutQuart'
+                }
+            }
+        });
+    }
+
+    createRadarChart(containerId, features) {
+        this.destroyChart(containerId);
+        
+        const ctx = document.getElementById(containerId).getContext('2d');
+        const featureNames = Object.keys(features);
+        const featureValues = Object.values(features);
+        
+        // Normalize values to 0-100 scale for radar chart
+        const normalizedValues = featureValues.map(value => {
+            // Simple normalization - adjust based on typical ranges
+            return Math.min(100, Math.max(0, (value / Math.max(...featureValues)) * 100));
+        });
+        
+        this.charts[containerId] = new Chart(ctx, {
+            type: 'radar',
+            data: {
+                labels: featureNames.map(name => this.getFeatureDisplayName(name)),
+                datasets: [{
+                    label: 'Feature Values',
+                    data: normalizedValues,
+                    backgroundColor: 'rgba(0, 212, 255, 0.2)',
+                    borderColor: 'rgba(0, 212, 255, 1)',
+                    borderWidth: 2,
+                    pointBackgroundColor: 'rgba(0, 212, 255, 1)',
+                    pointBorderColor: '#fff',
+                    pointHoverBackgroundColor: '#fff',
+                    pointHoverBorderColor: 'rgba(0, 212, 255, 1)'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    title: {
+                        display: true,
+                        text: 'Feature Profile',
+                        color: '#00d4ff',
+                        font: {
+                            family: 'Orbitron',
+                            size: 16,
+                            weight: 'bold'
+                        }
+                    }
+                },
+                scales: {
+                    r: {
+                        beginAtZero: true,
+                        max: 100,
+                        ticks: {
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(26, 26, 46, 0.3)'
+                        },
+                        pointLabels: {
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron',
+                                size: 10
+                            }
+                        }
+                    }
+                },
+                animation: {
+                    duration: 2000,
+                    easing: 'easeInOutQuart'
+                }
+            }
+        });
+    }
+
+    createScatterPlot(containerId, results, xFeature, yFeature) {
+        this.destroyChart(containerId);
+        
+        const ctx = document.getElementById(containerId).getContext('2d');
+        const confirmedData = [];
+        const notConfirmedData = [];
+        
+        results.forEach(result => {
+            const point = {
+                x: result[xFeature] || 0,
+                y: result[yFeature] || 0
+            };
+            
+            if (result.classification === 'CONFIRMED') {
+                confirmedData.push(point);
+            } else {
+                notConfirmedData.push(point);
+            }
+        });
+        
+        this.charts[containerId] = new Chart(ctx, {
+            type: 'scatter',
+            data: {
+                datasets: [{
+                    label: 'Confirmed',
+                    data: confirmedData,
+                    backgroundColor: 'rgba(16, 185, 129, 0.6)',
+                    borderColor: 'rgba(16, 185, 129, 1)',
+                    borderWidth: 2
+                }, {
+                    label: 'Not Confirmed',
+                    data: notConfirmedData,
+                    backgroundColor: 'rgba(239, 68, 68, 0.6)',
+                    borderColor: 'rgba(239, 68, 68, 1)',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        }
+                    },
+                    title: {
+                        display: true,
+                        text: `${this.getFeatureDisplayName(xFeature)} vs ${this.getFeatureDisplayName(yFeature)}`,
+                        color: '#00d4ff',
+                        font: {
+                            family: 'Orbitron',
+                            size: 16,
+                            weight: 'bold'
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: this.getFeatureDisplayName(xFeature),
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        },
+                        ticks: {
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(26, 26, 46, 0.3)'
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: this.getFeatureDisplayName(yFeature),
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        },
+                        ticks: {
+                            color: '#b0b0b0',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(26, 26, 46, 0.3)'
+                        }
+                    }
+                },
+                animation: {
+                    duration: 2000,
+                    easing: 'easeInOutQuart'
+                }
+            }
+        });
+    }
+
+    // Interactive Features
+    showFeatureDetails(featureName, importance) {
+        const featureDescriptions = {
+            'koi_ror': 'Planet-to-Star Radius Ratio: The ratio of the planet\'s radius to the host star\'s radius. This is crucial for determining the planet\'s size relative to its star.',
+            'koi_impact': 'Impact Parameter: The minimum distance between the center of the planet and the center of the star during transit, normalized by the star\'s radius.',
+            'koi_depth': 'Transit Depth: The fractional decrease in stellar brightness during transit, measured in parts per million (ppm).',
+            'koi_prad': 'Planetary Radius: The radius of the planet measured in Earth radii (R⊕). This helps classify planets by size.',
+            'koi_teq': 'Equilibrium Temperature: The theoretical temperature of the planet assuming it\'s a black body in thermal equilibrium with its star.',
+            'koi_duration': 'Transit Duration: The time it takes for the planet to completely cross the star\'s disk during transit.',
+            'koi_insol': 'Insolation Flux: The amount of stellar radiation received by the planet per unit area, relative to Earth\'s insolation.',
+            'koi_steff': 'Stellar Effective Temperature: The surface temperature of the host star, which affects the planet\'s climate and habitability.'
+        };
+
+        const description = featureDescriptions[featureName] || 'Feature description not available.';
+        const displayName = this.getFeatureDisplayName(featureName);
+        const importancePercent = (importance * 100).toFixed(1);
+
+        this.showNotification(
+            `<strong>${displayName}</strong><br>Importance: ${importancePercent}%<br><br>${description}`,
+            'info'
+        );
+    }
+
+    addChartInteractivity() {
+        // Add click handlers to all charts for enhanced interactivity
+        Object.keys(this.charts).forEach(chartId => {
+            const chart = this.charts[chartId];
+            if (chart && chart.canvas) {
+                chart.canvas.style.cursor = 'pointer';
+            }
+        });
+    }
+
+    // Enhanced tooltip configuration for all charts
+    getCosmicTooltipConfig() {
+        return {
+            backgroundColor: 'rgba(26, 26, 46, 0.95)',
+            titleColor: '#00d4ff',
+            bodyColor: '#b0b0b0',
+            borderColor: '#00d4ff',
+            borderWidth: 1,
+            cornerRadius: 8,
+            titleFont: {
+                family: 'Orbitron',
+                weight: 'bold',
+                size: 12
+            },
+            bodyFont: {
+                family: 'Orbitron',
+                size: 11
+            },
+            padding: 12,
+            displayColors: false
+        };
+    }
+
+    // Export functionality for charts
+    exportChart(chartId, filename = 'chart') {
+        const chart = this.charts[chartId];
+        if (chart) {
+            const url = chart.toBase64Image();
+            const link = document.createElement('a');
+            link.download = `${filename}.png`;
+            link.href = url;
+            link.click();
+            this.showSuccess('Chart exported successfully!');
+        }
+    }
+
+    // Add export buttons to charts
+    addExportButtons() {
+        Object.keys(this.charts).forEach(chartId => {
+            const chartContainer = document.getElementById(chartId).parentElement;
+            if (!chartContainer.querySelector('.export-button')) {
+                const exportBtn = document.createElement('button');
+                exportBtn.className = 'export-button';
+                exportBtn.innerHTML = '📊 Export';
+                exportBtn.style.cssText = `
+                    position: absolute;
+                    top: 10px;
+                    right: 10px;
+                    background: rgba(0, 212, 255, 0.2);
+                    border: 1px solid rgba(0, 212, 255, 0.5);
+                    color: #00d4ff;
+                    padding: 0.5rem 1rem;
+                    border-radius: 6px;
+                    font-family: 'Orbitron', monospace;
+                    font-size: 0.8rem;
+                    cursor: pointer;
+                    transition: all 0.3s ease;
+                    z-index: 10;
+                `;
+                
+                exportBtn.addEventListener('click', () => {
+                    this.exportChart(chartId, `exoplanet-${chartId}`);
+                });
+                
+                exportBtn.addEventListener('mouseenter', () => {
+                    exportBtn.style.background = 'rgba(0, 212, 255, 0.3)';
+                    exportBtn.style.transform = 'scale(1.05)';
+                });
+                
+                exportBtn.addEventListener('mouseleave', () => {
+                    exportBtn.style.background = 'rgba(0, 212, 255, 0.2)';
+                    exportBtn.style.transform = 'scale(1)';
+                });
+                
+                chartContainer.style.position = 'relative';
+                chartContainer.appendChild(exportBtn);
+            }
+        });
     }
 }
 
