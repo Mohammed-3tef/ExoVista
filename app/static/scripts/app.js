@@ -455,8 +455,11 @@ class CosmicHunter {
 
         // format: keep newlines + bold
         const formattedMessage = message
-            .replace(/\n/g, "<br>")
-            .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+            .replace(/^### (.*$)/gim, '<div style="font-size:16px; font-weight:bold;">$1</div>')
+            .replace(/^## (.*$)/gim,  '<div style="font-size:18px; font-weight:bold;">$1</div>')
+            .replace(/^# (.*$)/gim,   '<div style="font-size:20px; font-weight:bold;">$1</div>')
+            .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+            .replace(/\n/g, "<br>");
 
         messageDiv.innerHTML = `<div class="message-content">${formattedMessage}</div>`;
         

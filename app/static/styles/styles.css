@@ -63,7 +63,7 @@ body {
         radial-gradient(2px 2px at 160px 30px, #ddd, transparent);
     background-repeat: repeat;
     background-size: 200px 100px;
-    animation: sparkle 20s linear infinite;
+    animation: sparkle 10s linear infinite;
 }
 
 .stars2 {
@@ -73,7 +73,7 @@ body {
         radial-gradient(1px 1px at 150px 50px, #ccc, transparent);
     background-repeat: repeat;
     background-size: 300px 200px;
-    animation: sparkle 15s linear infinite reverse;
+    animation: sparkle 5s linear infinite reverse;
 }
 
 .stars3 {
@@ -82,7 +82,7 @@ body {
         radial-gradient(1px 1px at 75px 75px, rgba(255,255,255,0.3), transparent);
     background-repeat: repeat;
     background-size: 150px 150px;
-    animation: sparkle 25s linear infinite;
+    animation: sparkle 5s linear infinite;
 }
 
 @keyframes sparkle {

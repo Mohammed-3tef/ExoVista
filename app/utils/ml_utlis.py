@@ -1,10 +1,15 @@
-
 import datetime
 from typing import Dict, Any, List, Tuple
 from fastapi import HTTPException
 import io
 import csv
+import os
+import joblib
+import pandas as pd
 
+# ============================================================
+# Heuristic Fallback Predictor
+# ============================================================
 class ExoplanetPredictor:
     """
     Minimal heuristic predictor as a fallback until a trained model is wired.
@@ -24,7 +29,6 @@ class ExoplanetPredictor:
         }
 
     def _normalize(self, key: str, value: float) -> float:
-        # Min/max clips based on UI ranges
         ranges = {
             'koi_ror': (0.001, 1.0),
             'koi_impact': (0.0, 1.0),
@@ -38,56 +42,38 @@ class ExoplanetPredictor:
         lo, hi = ranges.get(key, (0.0, 1.0))
         if value is None:
             return 0.0
-        if value < lo:
-            value = lo
-        if value > hi:
-            value = hi
-        # Some features correlate inversely; lightly adjust
-        invert = {'koi_impact'}
-        if key in invert:
+        value = max(lo, min(value, hi))  # clip
+        if key == 'koi_impact':  # inverse correlation
             value = hi - (value - lo)
         return (value - lo) / (hi - lo) if hi > lo else 0.0
 
     def _score(self, features: Dict[str, float]) -> float:
-        score = 0.0
-        total_weight = 0.0
-        
-        # Calculate weighted score based on available features
+        score, total_weight = 0.0, 0.0
         for key, weight in self.feature_weights.items():
             if key in features and features[key] != 0.0:
-                normalized_value = self._normalize(key, float(features.get(key, 0.0)))
-                score += weight * normalized_value
+                norm = self._normalize(key, float(features.get(key, 0.0)))
+                score += weight * norm
                 total_weight += weight
-        
-        # Adjust score if we have partial features
         if total_weight > 0:
-            score = score / total_weight
-            
-        # Boost scores for Earth-like planets
-        if 'koi_prad' in features and 0.8 <= features['koi_prad'] <= 2.0:
+            score /= total_weight
+
+        # Boost for Earth-like
+        if 0.8 <= features.get('koi_prad', 0) <= 2.0:
             score += 0.15
-        if 'koi_teq' in features and 200 <= features['koi_teq'] <= 350:
+        if 200 <= features.get('koi_teq', 0) <= 350:
             score += 0.15
-            
-        # Clip to [0,1]
-        if score < 0.0:
-            score = 0.0
-        if score > 1.0:
-            score = 1.0
-        return score
+
+        return min(max(score, 0.0), 1.0)
 
     def predict_single(self, features: Dict[str, float]) -> Dict[str, Any]:
         try:
             confidence = self._score(features)
-            
-            # Three-category classification based on confidence thresholds
             if confidence >= 0.7:
                 classification = 'CONFIRMED'
             elif confidence >= 0.4:
                 classification = 'CANDIDATE'
             else:
                 classification = 'FALSE POSITIVE'
-                
             return {
                 'classification': classification,
                 'confidence': float(confidence),
@@ -102,14 +88,63 @@ class ExoplanetPredictor:
             }
 
 
-def load_predictor() -> ExoplanetPredictor:
-    """Load the trained predictor; fall back to heuristic predictor if unavailable."""
-    # Placeholder: if you later persist a trained model, load it here.
-    return ExoplanetPredictor()
+# ============================================================
+# Trained Model Predictor
+# ============================================================
+class TrainedExoplanetPredictor:
+    def __init__(self, model_path: str, scaler_path: str, threshold_path: str, feature_names_path: str):
+        self.model = joblib.load(model_path)
+        self.scaler = joblib.load(scaler_path)
+        self.threshold = joblib.load(threshold_path)
+        self.feature_names = joblib.load(feature_names_path)
+
+    def predict_single(self, features: Dict[str, float]) -> Dict[str, Any]:
+        try:
+            df = pd.DataFrame([features])
+            # Add missing columns with 0.0
+            for col in self.feature_names:
+                if col not in df.columns:
+                    df[col] = 0.0
+            # Ensure same column order
+            df = df[self.feature_names]
+
+            X_scaled = self.scaler.transform(df)
+            y_proba = self.model.predict_proba(X_scaled)[:, 1]
+            confidence = float(y_proba[0])
+            classification = "CONFIRMED" if confidence >= self.threshold else "FALSE POSITIVE"
+
+            return {
+                "classification": classification,
+                "confidence": confidence,
+                "threshold": float(self.threshold),
+            }
+        except Exception as e:
+            return {
+                "classification": "ERROR",
+                "confidence": 0.0,
+                "error": f"Trained prediction error: {e}",
+            }
 
 
-def predict_exoplanet(features: Dict[str, float], predictor: ExoplanetPredictor) -> Dict[str, Any]:
-    """Run ML model prediction for single exoplanet"""
+# ============================================================
+# Loader: choose trained model if available, fallback otherwise
+# ============================================================
+def load_predictor():
+    model_path = "app/models/saved/lgbm_model.pkl"
+    scaler_path = "app/models/saved/scaler.pkl"
+    threshold_path = "app/models/saved/threshold.pkl"
+    feature_names_path = "app/models/saved/feature_names.pkl"
+
+    if all(os.path.exists(p) for p in [model_path, scaler_path, threshold_path, feature_names_path]):
+        return TrainedExoplanetPredictor(model_path, scaler_path, threshold_path, feature_names_path)
+    else:
+        return ExoplanetPredictor()  # fallback heuristic
+
+
+# ============================================================
+# Prediction helpers
+# ============================================================
+def predict_exoplanet(features: Dict[str, float], predictor) -> Dict[str, Any]:
     if predictor is None:
         raise HTTPException(status_code=503, detail="ML model not loaded")
     result = predictor.predict_single(features)
@@ -137,17 +172,10 @@ def _parse_csv_bytes(file_bytes: bytes) -> Tuple[List[str], List[Dict[str, float
     return headers, rows
 
 
-def predict_batch_from_csv(file_bytes: bytes, predictor: ExoplanetPredictor) -> Dict[str, Any]:
+def predict_batch_from_csv(file_bytes: bytes, predictor) -> Dict[str, Any]:
     if predictor is None:
         raise HTTPException(status_code=503, detail="ML model not loaded")
     headers, rows = _parse_csv_bytes(file_bytes)
-    required = [
-        'koi_ror', 'koi_impact', 'koi_depth', 'koi_prad',
-        'koi_teq', 'koi_duration', 'koi_insol', 'koi_steff',
-    ]
-    missing = [c for c in required if c not in headers]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Missing required columns: {', '.join(missing)}")
 
     results: List[Dict[str, Any]] = []
     for r in rows:
@@ -176,4 +204,3 @@ def sample_features() -> Dict[str, float]:
         'koi_insol': 900.0,
         'koi_steff': 5800.0,
     }
- 

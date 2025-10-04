@@ -7,6 +7,7 @@ Part of NASA Space Apps 'A World Away' Challenge
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import (
     confusion_matrix, accuracy_score, precision_score, 
@@ -14,6 +15,8 @@ from sklearn.metrics import (
 )
 from lightgbm import LGBMClassifier
 import warnings
+import joblib
+import os
 warnings.filterwarnings('ignore')
 
 print("=" * 80)
@@ -24,7 +27,7 @@ print("=" * 80)
 # STEP 1: Load Data
 # ============================================================================
 print("\n[1/7] Loading data from kepler.csv...")
-df = pd.read_csv('kepler.csv')
+df = pd.read_csv('app/data/kepler.csv')
 print(f"Original dataset shape: {df.shape}")
 print(f"Columns: {df.shape[1]}, Rows: {df.shape[0]}")
 
@@ -85,9 +88,21 @@ print(f"Target shape: {y.shape}")
 # STEP 6: Scale Features
 # ============================================================================
 print("\n[6/7] Scaling features using StandardScaler...")
+non_numeric_cols = X.select_dtypes(exclude=[np.number]).columns
+
+if len(non_numeric_cols) > 0:
+    print(f"Encoding non-numeric columns: {list(non_numeric_cols)}")
+    le = LabelEncoder()
+    for col in non_numeric_cols:
+        X[col] = le.fit_transform(X[col].astype(str))
+
+# Now scale features
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 X_scaled = pd.DataFrame(X_scaled, columns=X.columns, index=X.index)
+print("Features scaled successfully")
+
+
 print(f"Features scaled successfully")
 print(f"Sample statistics (first feature):")
 print(f"  Mean: {X_scaled.iloc[:, 0].mean():.6f}")
@@ -273,3 +288,18 @@ print(f"✓ Cross-validation: 10-fold, optimized for ROC-AUC")
 print(f"✓ Decision threshold: {best_threshold:.2f} (optimized for recall)")
 print(f"✓ Final recall: {recall:.4f} - maximizing planet discovery")
 print(f"✓ Final precision: {precision:.4f} - maintaining reliability")
+
+# ====================================================================
+# SAVE MODEL, SCALER, AND THRESHOLD
+# ====================================================================
+print("\nSaving trained model, scaler, and threshold...")
+
+# Create models directory if not exists
+os.makedirs("app/models/saved", exist_ok=True)
+
+joblib.dump(best_model, "app/models/saved/lgbm_model.pkl")
+joblib.dump(scaler, "app/models/saved/scaler.pkl")
+joblib.dump(best_threshold, "app/models/saved/threshold.pkl")
+joblib.dump(list(X.columns), "app/models/saved/feature_names.pkl")
+
+print("✅ Model, scaler, and threshold saved successfully in app/models/saved/")
