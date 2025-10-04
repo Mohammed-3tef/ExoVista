@@ -1,305 +1,207 @@
-"""
-NASA Kepler Exoplanet Classification Model
-Based on methodologies from Luz et al. (2024) and Malik et al. (2022)
-Part of NASA Space Apps 'A World Away' Challenge
-"""
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder, LabelEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+
 
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.metrics import (
-    confusion_matrix, accuracy_score, precision_score, 
-    recall_score, f1_score, roc_auc_score, classification_report
-)
-from lightgbm import LGBMClassifier
-import warnings
-import joblib
-import os
-warnings.filterwarnings('ignore')
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder, LabelEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
 
-print("=" * 80)
-print("PART 1: DATA PREPROCESSING AND CLEANING")
-print("=" * 80)
+class keblerdata():
+    def _init_(self):
+        self.numeric_columns = []
+        self.categorical_columns = []
+        self.date_columns = []
 
-# ============================================================================
-# STEP 1: Load Data
-# ============================================================================
-print("\n[1/7] Loading data from kepler.csv...")
-df = pd.read_csv('app/data/kepler.csv')
-print(f"Original dataset shape: {df.shape}")
-print(f"Columns: {df.shape[1]}, Rows: {df.shape[0]}")
+    def cleaning(self, df: pd.DataFrame) -> pd.DataFrame:
+        df.drop_duplicates(inplace=True)
+        drop_cols = ['rowid','kepid','kepoi_name','koi_pdisposition','kepler_name','koi_score','koi_model_dof','koi_model_chisq','koi_sage','koi_ingress','koi_longp','koi_datalink_dvr','koi_datalink_dvs','koi_comment']
+        df = df.drop(columns=[col for col in drop_cols if col in df.columns], errors="ignore")
+        for col in df.columns:
+            if (df[col].isnull().sum()/len(df))<=0.2:
+                if df[col].dtype == "object":
+                    df[col] = df[col].fillna('unknown')
+                else:
+                    df[col] = df[col].fillna(df[col].median())
+        # Define numeric and categorical columns
+        self.numeric_columns = df.select_dtypes(include=['int64','float64']).columns.tolist()
+        self.categorical_columns = df.select_dtypes(include=['object']).columns.tolist()
+        # Separate date columns
+        self.date_columns = [col for col in self.categorical_columns if 'date' in col.lower()]
+        self.categorical_columns = [col for col in self.categorical_columns if col not in self.date_columns]
+        le=LabelEncoder()
+        for col in self.categorical_columns:
+            if df[col].nunique() ==2:
+                df[col] = le.fit_transform(df[col])
+        self.categorical_columns = [col for col in self.categorical_columns if df[col].nunique() > 2]
+        return df
 
-# ============================================================================
-# STEP 2: Remove Irrelevant Columns
-# ============================================================================
-print("\n[2/7] Removing irrelevant identifier and non-predictive columns...")
-columns_to_drop = [
-    'rowid', 'kepid', 'kepoi_name', 'kepler_name', 
-    'koi_pdisposition', 'koi_score', 'koi_teq_err1', 'koi_teq_err2'
-]
-# Only drop columns that exist in the dataframe
-columns_to_drop = [col for col in columns_to_drop if col in df.columns]
-df = df.drop(columns=columns_to_drop)
-print(f"Dropped {len(columns_to_drop)} columns")
-print(f"Remaining columns: {df.shape[1]}")
+    def feature_engineering(self, user_input) -> pd.DataFrame:
+        # تحويل input لـ DataFrame مهما كان نوعه
+        if isinstance(user_input, dict):
+            df = pd.DataFrame([user_input])
+        elif isinstance(user_input, pd.Series):
+            df = user_input.to_frame().T
+        else:
+            df = user_input.copy()
+        G = 6.67430e-11
+        M_sun = 1.989e30
+        day_to_sec = 86400
+        R_sun = 6.957e8
 
-# ============================================================================
-# STEP 3: Handle Missing Values
-# ============================================================================
-print("\n[3/7] Handling missing values...")
-print(f"Missing values before imputation: {df.isnull().sum().sum()}")
+        # koi_sma
+        if "koi_sma" not in df.columns and "koi_period" in df.columns and "koi_smass" in df.columns:
+            P_sec = df["koi_period"] * day_to_sec
+            M_kg = df["koi_smass"] * M_sun
+            df["koi_sma"] = ((G * M_kg * (P_sec*2)) / (4 * np.pi2))*(1/3) / R_sun
 
-# Impute missing values with column means for numerical columns
-numerical_cols = df.select_dtypes(include=[np.number]).columns
-for col in numerical_cols:
-    if df[col].isnull().any():
-        df[col].fillna(df[col].mean(), inplace=True)
+        # koi_teq
+        if "koi_teq" not in df.columns and all(col in df.columns for col in ["koi_steff","koi_srad","koi_sma"]):
+            df["koi_teq"] = df["koi_steff"] * np.sqrt(df["koi_srad"] / (2 * df["koi_sma"]))
 
-print(f"Missing values after imputation: {df.isnull().sum().sum()}")
+        # koi_insol
+        if "koi_insol" not in df.columns and all(col in df.columns for col in ["koi_steff","koi_srad","koi_sma"]):
+            df["koi_insol"] = (df["koi_srad"]*2 * df["koi_steff"]*4) / (df["koi_sma"]*2)
 
-# ============================================================================
-# STEP 4: Process Target Variable (koi_disposition)
-# ============================================================================
-print("\n[4/7] Processing target variable (koi_disposition)...")
-print(f"Original class distribution:\n{df['koi_disposition'].value_counts()}")
+        # koi_dor
+        if "koi_dor" not in df.columns and all(col in df.columns for col in ["koi_sma","koi_srad"]):
+            df["koi_dor"] = df["koi_sma"] / df["koi_srad"]
 
-# Filter: Keep only CONFIRMED and CANDIDATE, remove FALSE POSITIVE
-df = df[df['koi_disposition'].isin(['CONFIRMED', 'CANDIDATE'])]
-print(f"\nDataset shape after filtering: {df.shape}")
-print(f"Filtered class distribution:\n{df['koi_disposition'].value_counts()}")
+        # koi_depth
+        if "koi_depth" not in df.columns and "koi_ror" in df.columns:
+            df["koi_depth"] = df["koi_ror"]**2
 
-# Convert to binary: CONFIRMED = 0, CANDIDATE = 1
-df['koi_disposition'] = df['koi_disposition'].map({'CONFIRMED': 0, 'CANDIDATE': 1})
-print(f"\nBinary encoding - CONFIRMED: 0, CANDIDATE: 1")
-print(f"Final class distribution:\n{df['koi_disposition'].value_counts()}")
+        # koi_duration
+        if "koi_duration" not in df.columns and all(col in df.columns for col in ["koi_period","koi_srad","koi_sma"]):
+            df["koi_duration"] = (df["koi_period"]/np.pi) * (df["koi_srad"]/df["koi_sma"])
 
-# ============================================================================
-# STEP 5: Separate Features and Target
-# ============================================================================
-print("\n[5/7] Separating features (X) and target (y)...")
-X = df.drop('koi_disposition', axis=1)
-y = df['koi_disposition']
-print(f"Features shape: {X.shape}")
-print(f"Target shape: {y.shape}")
+        # koi_srho
+        if "koi_srho" not in df.columns and all(col in df.columns for col in ["koi_smass","koi_srad"]):
+            df["koi_srho"] = df["koi_smass"] / (df["koi_srad"]**3)
 
-# ============================================================================
-# STEP 6: Scale Features
-# ============================================================================
-print("\n[6/7] Scaling features using StandardScaler...")
-non_numeric_cols = X.select_dtypes(exclude=[np.number]).columns
+        # Color indices
+        if "color_g_r" not in df.columns and all(col in df.columns for col in ["koi_gmag","koi_rmag"]):
+            df["color_g_r"] = df["koi_gmag"] - df["koi_rmag"]
+        if "color_r_i" not in df.columns and all(col in df.columns for col in ["koi_rmag","koi_imag"]):
+            df["color_r_i"] = df["koi_rmag"] - df["koi_imag"]
 
-if len(non_numeric_cols) > 0:
-    print(f"Encoding non-numeric columns: {list(non_numeric_cols)}")
-    le = LabelEncoder()
-    for col in non_numeric_cols:
-        X[col] = le.fit_transform(X[col].astype(str))
+        # Fill any missing columns required by model
+        required_cols = ['koi_period','koi_smass','koi_srad','koi_steff','koi_ror','koi_gmag','koi_rmag','koi_imag','koi_sma','koi_teq','koi_insol','koi_dor','koi_depth','koi_duration','koi_prad','koi_num_transits']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = 0
+        df = df[required_cols]  
 
-# Now scale features
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-X_scaled = pd.DataFrame(X_scaled, columns=X.columns, index=X.index)
-print("Features scaled successfully")
+        df = df.fillna(0)
 
+        return df
 
-print(f"Features scaled successfully")
-print(f"Sample statistics (first feature):")
-print(f"  Mean: {X_scaled.iloc[:, 0].mean():.6f}")
-print(f"  Std: {X_scaled.iloc[:, 0].std():.6f}")
+    def plot_feature_importance(self, rf_model, numeric_cols, categorical_columns):
+        rf = rf_model.named_steps["classifier"]
+        feature_names = numeric_cols.copy()
+        if categorical_columns:
+            ohe = rf_model.named_steps["preprocessor"].named_transformers_["cat"]
+            ohe_features = ohe.get_feature_names_out(categorical_columns)
+            feature_names.extend(ohe_features)
+        importance = rf.feature_importances_
+        feature_importance = pd.DataFrame({
+            "Feature": feature_names,
+            "Importance": (importance / importance.sum()) * 100
+        }).sort_values("Importance", ascending=False)
 
-# ============================================================================
-# STEP 7: Split Data into Training and Testing Sets
-# ============================================================================
-print("\n[7/7] Splitting data into training (80%) and testing (20%) sets...")
-X_train, X_test, y_train, y_test = train_test_split(
-    X_scaled, y, test_size=0.2, random_state=42, stratify=y
-)
-print(f"X_train shape: {X_train.shape}")
-print(f"X_test shape: {X_test.shape}")
-print(f"y_train shape: {y_train.shape}")
-print(f"y_test shape: {y_test.shape}")
-print(f"\nTraining set class distribution:\n{y_train.value_counts()}")
-print(f"Testing set class distribution:\n{y_test.value_counts()}")
+        plt.figure(figsize=(12, len(feature_importance) * 0.3))
+        sns.barplot(data=feature_importance, x="Importance", y="Feature", palette="viridis")
+        plt.title("Feature Importances (%) - Random Forest", fontsize=14)
+        plt.xlabel("Importance (%)", fontsize=12)
+        plt.ylabel("Feature", fontsize=12)
+        for i, (imp, feat) in enumerate(zip(feature_importance["Importance"], feature_importance["Feature"])):
+            plt.text(imp + 0.1, i, f"{imp:.2f}%", va="center")
+        plt.tight_layout()
+        plt.show()
+        return feature_importance
 
-print("\n" + "=" * 80)
-print("DATA PREPROCESSING COMPLETED SUCCESSFULLY")
-print("=" * 80)
+    def train_xgb_model(self, df: pd.DataFrame, target_col: str, **xgb_params):
+        import xgboost as xgb
+        X = df[['koi_period','koi_smass','koi_srad','koi_steff','koi_ror','koi_gmag','koi_rmag','koi_imag','koi_sma','koi_teq','koi_insol','koi_dor','koi_depth','koi_prad','koi_num_transits']]
+        y = df[target_col]
+        categorical_columns = [col for col in X.columns if X[col].dtype=='object']
+        numeric_cols = [col for col in X.columns if col not in categorical_columns]
 
-# ============================================================================
-# PART 2: MODEL CREATION, TRAINING, AND EVALUATION
-# ============================================================================
-print("\n\n" + "=" * 80)
-print("PART 2: MODEL CREATION, TRAINING, AND EVALUATION")
-print("=" * 80)
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ("num","passthrough",numeric_cols),
+                ("cat",OneHotEncoder(handle_unknown='ignore',drop="first"),categorical_columns)
+            ]
+        )
 
-# ============================================================================
-# STEP 1: Model Selection - LightGBM Classifier
-# ============================================================================
-print("\n[1/4] Model Selection: LightGBM Classifier (Gradient Boosted Trees)")
-print("Following methodology from Malik et al. (2022)")
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+        xgb_clf = xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42, **xgb_params)
+        pipeline = Pipeline(steps=[("preprocessor",preprocessor),("classifier",xgb_clf)])
+        pipeline.fit(X_train, y_train)
+        y_pred = pipeline.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        report = classification_report(y_test, y_pred)
+        cm = confusion_matrix(y_test, y_pred)
+        print(f"✅ Model Trained with params: {xgb_params}")
+        print(f"Accuracy: {acc:.4f}")
+        print("Confusion Matrix:\n", cm)
+        print("Classification Report:\n", report)
+        return pipeline, acc, report, cm
 
-# ============================================================================
-# STEP 2: Hyperparameter Tuning with GridSearchCV
-# ============================================================================
-print("\n[2/4] Hyperparameter tuning using GridSearchCV with 10-fold CV...")
-print("Optimization metric: ROC-AUC")
+    def train_rf_model(self, df: pd.DataFrame, target_col: str, **rf_params):
+        X = df[['koi_period','koi_smass','koi_srad','koi_steff','koi_ror','koi_gmag','koi_rmag','koi_imag','koi_sma','koi_teq','koi_insol','koi_dor','koi_depth','koi_duration','koi_prad','koi_num_transits']]
+        y = df[target_col]
+        categorical_columns = [col for col in X.columns if X[col].dtype=='object']
+        numeric_cols = [col for col in X.columns if col not in categorical_columns]
 
-# Define the parameter grid for LightGBM
-param_grid = {
-    'n_estimators': [100, 200, 300],
-    'learning_rate': [0.01, 0.05, 0.1],
-    'num_leaves': [20, 31, 40],
-    'max_depth': [5, 7, 10],
-    'min_child_samples': [20, 30, 50]
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ("num","passthrough",numeric_cols),
+                ("cat",OneHotEncoder(handle_unknown='ignore',drop="first"),categorical_columns)
+            ]
+        )
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+        rf = RandomForestClassifier(random_state=42,class_weight="balanced",**rf_params)
+        pipeline = Pipeline(steps=[("preprocessor",preprocessor),("classifier",rf)])
+        pipeline.fit(X_train, y_train)
+        y_pred = pipeline.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        report = classification_report(y_test, y_pred)
+        cm = confusion_matrix(y_test, y_pred)
+        print(f"✅ Model Trained with params: {rf_params}")
+        print(f"Accuracy: {acc:.4f}")
+        print("Confusion Matrix:\n", cm)
+
+df=pd.read_csv('app/data/kepler.csv')
+kebler = keblerdata()
+df = kebler.cleaning(df)
+# Features & target
+df.drop(df[df['koi_disposition']=='FALSE POSITIVE'].index,inplace=True)
+df['koi_disposition']=df['koi_disposition'].map({'CONFIRMED':0,'CANDIDATE':1}).astype(int)
+xgb_params = {
+    "objective": "multi:softmax",
+    "num_class": 3,
+    "learning_rate": 0.1,
+    "max_depth": 6,
+    "alpha": 10,
+    "n_estimators": 100
 }
+pipeline, acc, report, cm = kebler.train_xgb_model(df, target_col="koi_disposition", **xgb_params)
 
-# Initialize base LightGBM classifier
-lgbm = LGBMClassifier(random_state=42, verbose=-1)
-
-# Set up GridSearchCV with 10-fold cross-validation and ROC-AUC scoring
-grid_search = GridSearchCV(
-    estimator=lgbm,
-    param_grid=param_grid,
-    cv=10,
-    scoring='roc_auc',
-    n_jobs=-1,
-    verbose=1
-)
-
-print("Starting grid search (this may take several minutes)...")
-grid_search.fit(X_train, y_train)
-
-print("\nGrid search completed!")
-print(f"Best ROC-AUC score from CV: {grid_search.best_score_:.4f}")
-print(f"Best hyperparameters found:")
-for param, value in grid_search.best_params_.items():
-    print(f"  {param}: {value}")
-
-# Get the best model
-best_model = grid_search.best_estimator_
-
-# ============================================================================
-# STEP 3: Optimal Decision Threshold Tuning
-# ============================================================================
-print("\n[3/4] Finding optimal decision threshold to maximize recall...")
-print("Strategy: Prioritize finding all potential planets (high recall)")
-
-# Predict probabilities for the positive class (CANDIDATE = 1)
-y_proba = best_model.predict_proba(X_test)[:, 1]
-
-# Test different thresholds
-thresholds = np.arange(0.1, 0.91, 0.05)
-best_threshold = 0.5
-best_recall = 0
-threshold_results = []
-
-print("\nTesting decision thresholds:")
-print(f"{'Threshold':<12} {'Precision':<12} {'Recall':<12} {'F1-Score':<12}")
-print("-" * 50)
-
-for threshold in thresholds:
-    y_pred_threshold = (y_proba >= threshold).astype(int)
-    precision = precision_score(y_test, y_pred_threshold, zero_division=0)
-    recall = recall_score(y_test, y_pred_threshold)
-    f1 = f1_score(y_test, y_pred_threshold)
-    
-    threshold_results.append({
-        'threshold': threshold,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1
-    })
-    
-    print(f"{threshold:<12.2f} {precision:<12.4f} {recall:<12.4f} {f1:<12.4f}")
-    
-    # Select threshold with highest recall while maintaining precision > 0.3
-    if recall > best_recall and precision > 0.3:
-        best_recall = recall
-        best_threshold = threshold
-
-print(f"\nOptimal threshold selected: {best_threshold:.2f}")
-print(f"This threshold achieves recall of {best_recall:.4f}")
-
-# ============================================================================
-# STEP 4: Final Model Evaluation
-# ============================================================================
-print("\n[4/4] Final model evaluation on test set...")
-
-# Apply optimal threshold to get final predictions
-y_pred_final = (y_proba >= best_threshold).astype(int)
-
-# Calculate all performance metrics
-conf_matrix = confusion_matrix(y_test, y_pred_final)
-accuracy = accuracy_score(y_test, y_pred_final)
-precision = precision_score(y_test, y_pred_final)
-recall = recall_score(y_test, y_pred_final)
-f1 = f1_score(y_test, y_pred_final)
-auc = roc_auc_score(y_test, y_proba)
-
-# Print comprehensive performance report
-print("\n" + "=" * 80)
-print("FINAL MODEL PERFORMANCE REPORT")
-print("=" * 80)
-
-print("\n1. CONFUSION MATRIX:")
-print(f"\n                Predicted")
-print(f"              0 (CONFIRMED)  1 (CANDIDATE)")
-print(f"Actual 0      {conf_matrix[0][0]:<15} {conf_matrix[0][1]:<15}")
-print(f"       1      {conf_matrix[1][0]:<15} {conf_matrix[1][1]:<15}")
-
-tn, fp, fn, tp = conf_matrix.ravel()
-print(f"\nTrue Negatives (TN):  {tn}")
-print(f"False Positives (FP): {fp}")
-print(f"False Negatives (FN): {fn}")
-print(f"True Positives (TP):  {tp}")
-
-print("\n2. CLASSIFICATION METRICS:")
-print(f"{'Metric':<20} {'Value':<10}")
-print("-" * 30)
-print(f"{'Accuracy':<20} {accuracy:.4f}")
-print(f"{'Precision':<20} {precision:.4f}")
-print(f"{'Recall (Sensitivity)':<20} {recall:.4f}")
-print(f"{'F1-Score':<20} {f1:.4f}")
-print(f"{'AUC Score':<20} {auc:.4f}")
-
-print("\n3. DETAILED CLASSIFICATION REPORT:")
-print(classification_report(
-    y_test, y_pred_final, 
-    target_names=['CONFIRMED', 'CANDIDATE'],
-    digits=4
-))
-
-print("\n4. MODEL INTERPRETATION:")
-print(f"• The model correctly identified {recall*100:.2f}% of candidate exoplanets")
-print(f"• Of all planets predicted as candidates, {precision*100:.2f}% were correct")
-print(f"• Overall accuracy: {accuracy*100:.2f}%")
-print(f"• AUC score of {auc:.4f} indicates {'excellent' if auc > 0.9 else 'good' if auc > 0.8 else 'fair'} discriminative ability")
-
-print("\n" + "=" * 80)
-print("MODEL TRAINING AND EVALUATION COMPLETED SUCCESSFULLY")
-print("=" * 80)
-
-print("\n5. SUMMARY:")
-print(f"✓ Dataset: {len(df)} KOIs processed")
-print(f"✓ Features: {X_train.shape[1]} predictive features")
-print(f"✓ Model: LightGBM with optimized hyperparameters")
-print(f"✓ Cross-validation: 10-fold, optimized for ROC-AUC")
-print(f"✓ Decision threshold: {best_threshold:.2f} (optimized for recall)")
-print(f"✓ Final recall: {recall:.4f} - maximizing planet discovery")
-print(f"✓ Final precision: {precision:.4f} - maintaining reliability")
-
-# ====================================================================
-# SAVE MODEL, SCALER, AND THRESHOLD
-# ====================================================================
-print("\nSaving trained model, scaler, and threshold...")
-
-# Create models directory if not exists
-os.makedirs("app/models/saved", exist_ok=True)
-
-joblib.dump(best_model, "app/models/saved/lgbm_model.pkl")
-joblib.dump(scaler, "app/models/saved/scaler.pkl")
-joblib.dump(best_threshold, "app/models/saved/threshold.pkl")
-joblib.dump(list(X.columns), "app/models/saved/feature_names.pkl")
-
-print("✅ Model, scaler, and threshold saved successfully in app/models/saved/")
+import joblib
+joblib.dump(pipeline, 'kepler_xgb_model.pkl')
